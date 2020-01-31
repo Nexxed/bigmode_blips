@@ -65,7 +65,7 @@ local function Evaluate()
 
             -- filter through the most recent blips update for blips belonging to this player
             local results = table.filter(latestBlipsUpdate, function(blip, key, blips)
-                return blip[1] == player
+                return blip[BLIP_INDEX_PLAYER_ID] == player
             end)
 
             -- if there are no blips belonging to this player, attempt to delete and dispose of handle
@@ -95,6 +95,7 @@ end)
 RegisterNetEvent("_bigmode:updateBlips")
 AddEventHandler("_bigmode:updateBlips", function(blips)
     latestBlipsUpdate = blips
+    collectgarbage("collect") -- lua is not collecting this garbage quick enough, this helps
 
     if(#evaluationPlayers >= 1) then
         Evaluate()
@@ -104,21 +105,16 @@ AddEventHandler("_bigmode:updateBlips", function(blips)
         (function()
             -- iterate all dormant blips sent to us by the server
             for index, blip in pairs(blips) do
-                local player = blip[1]
-                local playerPed = NetworkDoesEntityExistWithNetworkId(blip[2]) and NetworkGetEntityFromNetworkId(blip[2]) or nil
+                local player = blip[BLIP_INDEX_PLAYER_ID]
+                local pedNetworkId = blip[BLIP_INDEX_PED_NETWORK_ID]
+                local playerPed = NetworkDoesEntityExistWithNetworkId(pedNetworkId) and NetworkGetEntityFromNetworkId(pedNetworkId) or nil
 
                 -- if the player isn't in our instance and isn't our local player, draw this blip
                 if((not DoesEntityExist(playerPed)) and player ~= GetPlayerServerId(PlayerId())) then
 
                     -- get the players name and coords from the blip
-                    local playerName = blip[3]
-                    local coords = blip[4]
-
-                    -- sanity check in-case the player name isn't sent by server
-                    if(coords == nil) then
-                        coords = playerName
-                        playerName = nil
-                    end
+                    local coords = blip[BLIP_INDEX_COORDS]
+                    local playerName = blip[BLIP_INDEX_PLAYER_NAME]
 
                     -- check if a blip already exists on the map for this player and
                     -- if there is then use the stored handle, otherwise, create a
