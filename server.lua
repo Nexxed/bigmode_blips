@@ -9,6 +9,8 @@ local updateIntervals = {
     [0]     = 1000          -- once every second    | during 0-64 players
 }
 
+local DEBUG = false
+
 -- how many milliseconds to wait before sending an update to the next player in-loop
 -- example: player A gets sent an update, server waits X milliseconds before sending to player B
 -- can be useful for bandwidth reasons
@@ -39,7 +41,6 @@ local updateThreadTimeThreshold = 10        -- blip updates thread
 --- [[ CODENS HAPPENING HERE! DONT TOUCH! ]] ---
 local lastBlipsUpdate = {}
 local lastIntervalValue = 0
-local shouldSendNames = false -- no, changing this instead of the option above won't do anything
 
 function math.clamp(low, n, high)
     return math.min(math.max(n, low), high)
@@ -52,40 +53,16 @@ end)
 
 -- this is the main update thread for pushing blip location updates to players
 Citizen.CreateThread(function()
+    local shouldSendNames = nil
+
     while true do
+        collectgarbage("collect") -- lua is not collecting garbage left by this script fast enough, this helps
+
         local mt_begin = GetGameTimer()
 
         -- get and store all of the currently-connected players
         local players = GetPlayers()
-
-
-        -- iterate through the configured intervals and find the one that
-        -- best suits the current number of players
-        local updateInterval = 0
-        local updateIntervalLimit = 0
-        for limit, interval in pairs(updateIntervals) do
-            if(limit <= #players) then
-                updateInterval = interval
-                updateIntervalLimit = limit
-            end
-        end
-
-        if(lastIntervalValue ~= updateIntervalLimit) then
-            lastIntervalValue = updateIntervalLimit
-            print(string.format("[^2BigMode^7] Updated blip update interval to ^2%dms (%d) ^7due to ^2%d ^7players being connected.", updateInterval, updateIntervalLimit, #players))
-        end
-
-
-        -- iterate through the configured sendNames limits and find the one that
-        -- best suits the current number of players
-        local sendNamesLimit = 0
-        for limit, sendName in pairs(sendNames) do
-            if(limit <= #players) then
-                shouldSendNames = sendName
-                sendNamesLimit = limit
-            end
-        end
-
+        local updateInterval = ComputeUpdateInterval(#players)
 
         if(#players > 0) then
 
@@ -96,48 +73,13 @@ Citizen.CreateThread(function()
 
                 players = GetPlayers()
 
-                -- iterate through the players table above and build an event object
-                -- that includes the players' server ID and their in-game position
-                local blips = {}
-                for index, player in ipairs(players) do
-                    local playerPed = GetPlayerPed(player)
-
-                    -- check if ped exists to refrain from iterating potentially invalid player entities
-                    -- causes some players to not have blips if not double-checked
-                    if(DoesEntityExist(playerPed)) then
-                        local coords = GetEntityCoords(playerPed)
-
-                        -- build the blip object
-                        local obj = {
-                            player, NetworkGetNetworkIdFromEntity(playerPed),
-                            { coords.x, coords.y, coords.z }
-                        }
-
-                        -- if sendNames is enabled, then move coords up an index and insert the
-                        -- players name as the third, since that is what the client expects
-                        if(shouldSendNames) then
-                            obj[4] = obj[3]
-                            obj[3] = GetPlayerName(player)
-                        end
-
-                        table.insert(blips, obj)
-                    end
-                end
+                local blips = GetBlipsOfPlayers(players, ComputeShouldSendNames(#players))
 
                 -- create another thread to quickly move-on to the next tick
                 Citizen.CreateThread(function()
                     for index, player in ipairs(players) do
                         if(DoesEntityExist(GetPlayerPed(player))) then
-                            local final = {}
-
-                            -- filter-out the players' blip from the blips array being sent
-                            for index, blip in ipairs(blips) do
-                                if(blip[1] ~= player) then
-                                    table.insert(final, blip)
-                                end
-                            end
-
-                            TriggerClientEvent("_bigmode:updateBlips", player, final)
+                            TriggerClientEvent("_bigmode:updateBlips", player, blips)
 
                             Citizen.Wait(math.clamp(10, updateSpacing, 100))
                         end
@@ -169,3 +111,98 @@ Citizen.CreateThread(function()
         Citizen.Wait(updateInterval)
     end
 end)
+
+-- iterate through the configured sendNames limits and find the one that
+-- best suits the current number of players
+function ComputeShouldSendNames(playerCount)
+    local shouldSendNames = false
+
+    for limit, sendName in pairs(sendNames) do
+        if(limit <= playerCount) then
+            shouldSendNames = sendName
+        end
+    end
+
+    return shouldSendNames
+end
+
+-- iterate through the configured intervals and find the one that
+-- best suits the current number of players
+function ComputeUpdateInterval(playerCount)
+    local updateInterval = 0
+    local updateIntervalLimit = 0
+    for limit, interval in pairs(updateIntervals) do
+        if(limit <= playerCount) then
+            updateInterval = interval
+            updateIntervalLimit = limit
+        end
+    end
+
+    if(lastIntervalValue ~= updateIntervalLimit) then
+        lastIntervalValue = updateIntervalLimit
+        print(string.format("[^2BigMode^7] Updated blip update interval to ^2%dms (%d) ^7due to ^2%d ^7players being connected.", updateInterval, updateIntervalLimit, #players))
+    end
+
+    return updateInterval
+end
+
+function GetBlipsOfPlayers(players, shouldSendNames)
+    if DEBUG then
+        return GetDebugBlipsOfPlayers()
+    else
+        return GetRealBlipsOfPlayers(players, shouldSendNames)
+    end
+end
+
+-- iterate through the players table above and build an event object
+-- that includes the players' server ID and their in-game position
+function GetRealBlipsOfPlayers(players, shouldSendNames)
+    local blips = {}
+    for index, player in ipairs(players) do
+        local playerPed = GetPlayerPed(player)
+
+        -- check if ped exists to refrain from iterating potentially invalid player entities
+        -- causes some players to not have blips if not double-checked
+        if(DoesEntityExist(playerPed)) then
+            local coords = GetEntityCoords(playerPed)
+
+            -- build the blip object
+            local obj = {}
+            obj[BLIP_INDEX_PLAYER_ID]      = player
+            obj[BLIP_INDEX_PED_NETWORK_ID] = NetworkGetNetworkIdFromEntity(playerPed)
+            obj[BLIP_INDEX_COORDS]         = { coords.x, coords.y, coords.z }
+
+            if(shouldSendNames) then
+                obj[BLIP_INDEX_PLAYER_NAME] = GetPlayerName(player)
+            end
+
+            table.insert(blips, obj)
+        end
+    end
+
+    return blips
+end
+
+function GetDebugBlipsOfPlayers()
+    local blips = {}
+    for i = 1, 1024 do
+        local playerPed = -i
+
+        local obj = {}
+        obj[BLIP_INDEX_PLAYER_ID]      = -i
+        obj[BLIP_INDEX_PED_NETWORK_ID] = -i
+        obj[BLIP_INDEX_COORDS]         = { 
+            math.random(-200000, 200000)/100.0,
+            math.random(-400000, 400000)/100.0 + 1000.0,
+            math.random(-100000, 100000)/100.0,
+        }
+
+        if(shouldSendNames) then
+            obj[BLIP_INDEX_PLAYER_NAME] = 'Fake Player Blip #' .. i
+        end
+
+        table.insert(blips, obj)
+    end
+
+    return blips
+end
