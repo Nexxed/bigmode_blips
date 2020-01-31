@@ -128,16 +128,7 @@ Citizen.CreateThread(function()
                 Citizen.CreateThread(function()
                     for index, player in ipairs(players) do
                         if(DoesEntityExist(GetPlayerPed(player))) then
-                            local final = {}
-
-                            -- filter-out the players' blip from the blips array being sent
-                            for index, blip in ipairs(blips) do
-                                if(blip[1] ~= player) then
-                                    table.insert(final, blip)
-                                end
-                            end
-
-                            TriggerClientEvent("_bigmode:updateBlips", player, final)
+                            TriggerClientEvent("_bigmode:updateBlips", player, blips)
 
                             Citizen.Wait(math.clamp(10, updateSpacing, 100))
                         end
